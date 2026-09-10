@@ -73,29 +73,30 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 		return;
 	}
 	
-	switch (inst.raw & 0x0fffffff) {
-		// Branch and exchange
-		case 0x12fff10: branch_and_exchange(cpu, 0x0);
-		case 0x12fff11: branch_and_exchange(cpu, 0x1);
-		case 0x12fff12: branch_and_exchange(cpu, 0x2);
-		case 0x12fff13: branch_and_exchange(cpu, 0x3);
-		case 0x12fff14: branch_and_exchange(cpu, 0x4);
-		case 0x12fff15: branch_and_exchange(cpu, 0x5);
-		case 0x12fff16: branch_and_exchange(cpu, 0x6);
-		case 0x12fff17: branch_and_exchange(cpu, 0x7);
-		case 0x12fff18: branch_and_exchange(cpu, 0x8);
-		case 0x12fff19: branch_and_exchange(cpu, 0x9);
-		case 0x12fff1a: branch_and_exchange(cpu, 0xa);
-		case 0x12fff1b: branch_and_exchange(cpu, 0xb);
-		case 0x12fff1c: branch_and_exchange(cpu, 0xc);
-		case 0x12fff1d: branch_and_exchange(cpu, 0xd);
-		case 0x12fff1e: branch_and_exchange(cpu, 0xe);
-		case 0x12fff1f: branch_and_exchange(cpu, 0xf);
-		
-		// Branch and Branch with link
-		// TODO this. Also, reconsider how u gonna do this. inlining everything isnt viable
-	
-		default: abort("unknown inst: 0x%x", inst.raw);
+	switch (true) {
+		case inst.raw & 0xF00_0000 == 0xF00_0000: // TODO Software Interrupt
+			unknown_inst(inst);
+		case inst.raw & 0xE00_0010 == 0xE00_0010: // Undefined (Single Data Transfer with invalid (register) shift)
+			unknown_inst(inst);
+		case inst.raw & 0xC00_0000 == 0x400_0000: // TODO Single Data Transfer
+			unknown_inst(inst);
+		case inst.raw & 0xE00_0000 == 0x800_0000: // TODO Block Data Transfer
+			unknown_inst(inst);
+		case inst.raw & 0xE00_0000 == 0xA00_0000: // TODO Branch
+			unknown_inst(inst);
+		case inst.raw & 0xFFF_FFF0 == 0x12F_FF10: // Branch and Exchange
+			branch_and_exchange(cpu, inst.branchex.rn);
+		case inst.raw & 0xFC0_00F0 == 0x000_0090: // TODO Multiply
+			unknown_inst(inst);
+		case inst.raw & 0xF80_00F0 == 0x080_0090: // TODO Multiply Long
+			unknown_inst(inst);
+		case inst.raw & 0xFB0_0FF0 == 0x100_0090: // TODO Single Data Swap
+			unknown_inst(inst);
+		case inst.raw & 0xE40_0F90 == 0x000_0090: // TODO Halfword Data Transfer: register offset
+			unknown_inst(inst);
+		case inst.raw & 0xE40_0090 == 0x040_0090: // TODO Halfword Data Transfer: immediate offset
+			unknown_inst(inst);
+		default: unknown_inst(inst);
 	}
 	
 	cpu.cycles += cpu.last_inst_s_cycles * mmu.waitstates_s;
@@ -131,7 +132,9 @@ union ArmInst @private {
 	uint raw;
 	bitstruct : uint {
 		uint cond : 28..31;
-		uint b26_27: 26..27;
+	}
+	bitstruct branchex : uint {
+		uint rn : 0..3;
 	}
 	bitstruct dataproc : uint {
 		uint opcode: 21..24;
@@ -155,4 +158,8 @@ fn void branch_and_exchange(Cpu* cpu, uint rn) @private {
 
 fn void branch_with_maybe_link(Cpu* cpu, bool link, uint inst_offset) @private {
 	abort("not implemented yet");
+}
+
+fn void unknown_inst(ArmInst inst) {
+	abort("unknown inst: 0x%x", inst.raw);
 }
