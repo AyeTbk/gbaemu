@@ -2,6 +2,10 @@ module gbaemu;
 
 const uint REG_PC = 15;
 
+const uint CPSR_MODE_USER = 0x10;
+const uint CPSR_MODE_SUPERVISOR = 0x13;
+const uint CPSR_MODE_ABORT = 0x17;
+
 struct Cpu {
 	uint[16] r;
 	Cpsr cpsr;
@@ -53,10 +57,10 @@ bitstruct Cpsr : uint {
 	bool z: 30; // Zero flag
 	bool c: 29; // Carry flag
 	bool v: 28; // Overflow flag
-	bool i: 7; // IRQ disable
-	bool f: 6; // FIQ disable
-	bool t: 5; // State bit (0=Arm, 1=Thumb)
-	uint m: 0..4; // Mode bits
+	bool irq_disable: 7; // IRQ disable
+	bool fiq_disable: 6; // FIQ disable
+	bool thumb: 5; // State bit (0=Arm, 1=Thumb)
+	uint mode: 0..4; // Mode bits
 }
 
 fn void fetch_decode_execute(Cpu* cpu, Mmu* mmu) {
@@ -68,14 +72,18 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 	ArmInst inst;
 	inst.raw = mmu.read32(cpu.read_reg(REG_PC));
 	
+	// TODO increment PC, be mindfull of pipeline!
+	
 	if (!check_cond(inst.cond, cpu.cpsr)) {
 		cpu.cycles += mmu.waitstates_s;
 		return;
 	}
 	
 	switch (true) {
-		case inst.raw & 0xF00_0000 == 0xF00_0000: // TODO Software Interrupt
-			unknown_inst(inst);
+		case inst.raw & 0xF00_0000 == 0xF00_0000: // Software Interrupt
+			software_interrupt(cpu);
+		case inst.raw & 0xFF0_00F0 == 0x120_0070: // Breakpoint (Abort)
+			breakpoint(cpu);
 		case inst.raw & 0xE00_0010 == 0xE00_0010: // Undefined (Single Data Transfer with invalid (register) shift)
 			unknown_inst(inst);
 		case inst.raw & 0xC00_0000 == 0x400_0000: // TODO Single Data Transfer
@@ -145,10 +153,30 @@ union ArmInst @private {
 	}
 }
 
+fn void software_interrupt(Cpu* cpu) @private {
+	cpu.r14_svc = cpu.read_reg(REG_PC); // TODO make sure this is indeed the address of inst after the SWI inst
+	cpu.write_reg(REG_PC, 0x0000_0008);
+	
+	cpu.spsr_svc = cpu.cpsr;
+	cpu.cpsr.mode = CPSR_MODE_SUPERVISOR;
+	cpu.cpsr.thumb = false;
+	cpu.cpsr.irq_disable = true;
+}
+
+fn void breakpoint(Cpu* cpu) @private {
+	cpu.r14_abt = cpu.read_reg(REG_PC); // TODO make sure this is indeed the address of inst after the BKPT inst
+	cpu.write_reg(REG_PC, 0x0000_000C);
+	
+	cpu.spsr_abt = cpu.cpsr;
+	cpu.cpsr.mode = CPSR_MODE_ABORT;
+	cpu.cpsr.thumb = false;
+	cpu.cpsr.irq_disable = true;
+}
+
 fn void branch_and_exchange(Cpu* cpu, uint rn) @private {
 	uint rn_val = cpu.read_reg(rn);
 	uint dst_addr = rn_val & ~1u;
-	cpu.cpsr.t = (rn_val & 1u) == 1;
+	cpu.cpsr.thumb = (rn_val & 1u) == 1;
 	cpu.write_reg(REG_PC, dst_addr);
 	
 	cpu.last_inst_s_cycles = 2;
