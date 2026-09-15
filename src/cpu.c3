@@ -3,36 +3,31 @@ module gbaemu;
 const uint REG_PC = 15;
 
 const uint CPSR_MODE_USER = 0x10;
+const uint CPSR_MODE_FIQ = 0x11;
+const uint CPSR_MODE_IRQ = 0x12;
 const uint CPSR_MODE_SUPERVISOR = 0x13;
 const uint CPSR_MODE_ABORT = 0x17;
+const uint CPSR_MODE_UNDEFINED = 0x1B;
 
 struct Cpu {
-	uint[16] r;
+	uint[15] r; // PC is excluded.
 	Cpsr cpsr;
 	
-	uint r8_fiq;
-	uint r9_fiq;
-	uint r10_fiq;
-	uint r11_fiq;
-	uint r12_fiq;
-	uint r13_fiq;
-	uint r14_fiq;
+	uint raw_pc; // Program counter, without the effects of pipelining readahead.
+	
+	uint[15] r_fiq;
 	Cpsr spsr_fiq;
 	
-	uint r13_svc;
-	uint r14_svc;
+	uint[15] r_svc;
 	Cpsr spsr_svc;
 	
-	uint r13_abt;
-	uint r14_abt;
+	uint[15] r_abt;
 	Cpsr spsr_abt;
 	
-	uint r13_irq;
-	uint r14_irq;
+	uint[15] r_irq;
 	Cpsr spsr_irq;
 	
-	uint r13_und;
-	uint r14_und;
+	uint[15] r_und;
 	Cpsr spsr_und;
 	
 	uint cycles;
@@ -42,14 +37,52 @@ struct Cpu {
 	uint last_inst_i_cycles;
 }
 
+fn void Cpu.init(Cpu* cpu) {
+	cpu.cpsr.mode = CPSR_MODE_USER;
+}
+
 fn uint Cpu.read_reg(Cpu* cpu, uint reg) {
-	// TODO impl register banking
-	return cpu.r[reg & 0xf];
+	return *cpu.get_reg_ptr(reg);
 }
 
 fn void Cpu.write_reg(Cpu* cpu, uint reg, uint value) {
-	// TODO impl register banking
-	cpu.r[reg & 0xf] = value;
+	*cpu.get_reg_ptr(reg) = value;
+}
+
+fn uint* Cpu.get_reg_ptr(Cpu* cpu, uint reg) {
+	reg = reg & 0xf;
+	if (reg == REG_PC) {
+		return &cpu.raw_pc;
+	}
+	// Register banking
+	switch (cpu.cpsr.mode) {
+		case CPSR_MODE_USER:
+			return &cpu.r[reg];
+		case CPSR_MODE_FIQ:
+			if (reg > 7) { return &cpu.r_fiq[reg]; }
+			else         { return &cpu.r[reg]; }
+		case CPSR_MODE_SUPERVISOR:
+			if (reg > 12) { return &cpu.r_svc[reg]; }
+			else          { return &cpu.r[reg]; }
+		case CPSR_MODE_ABORT:
+			if (reg > 12) { return &cpu.r_abt[reg]; }
+			else          { return &cpu.r[reg]; }
+		case CPSR_MODE_IRQ:
+			if (reg > 12) { return &cpu.r_irq[reg]; }
+			else          { return &cpu.r[reg]; }
+		case CPSR_MODE_UNDEFINED:
+			if (reg > 12) { return &cpu.r_und[reg]; }
+			else          { return &cpu.r[reg]; }
+	}
+	abort("fellthrough unknown CPU mode");
+}
+
+fn uint Cpu.instruction_size(Cpu* cpu) {
+	if (cpu.cpsr.thumb) {
+		return 2;
+	} else {
+		return 4;
+	}
 }
 
 bitstruct Cpsr : uint {
@@ -70,7 +103,7 @@ fn void fetch_decode_execute(Cpu* cpu, Mmu* mmu) {
 
 fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 	ArmInst inst;
-	inst.raw = mmu.read32(cpu.read_reg(REG_PC));
+	inst.raw = mmu.read32(cpu.raw_pc);
 	
 	// TODO increment PC, be mindfull of pipeline!
 	
@@ -154,30 +187,38 @@ union ArmInst @private {
 }
 
 fn void software_interrupt(Cpu* cpu) @private {
-	cpu.r14_svc = cpu.read_reg(REG_PC); // TODO make sure this is indeed the address of inst after the SWI inst
-	cpu.write_reg(REG_PC, 0x0000_0008);
-	
 	cpu.spsr_svc = cpu.cpsr;
 	cpu.cpsr.mode = CPSR_MODE_SUPERVISOR;
 	cpu.cpsr.thumb = false;
 	cpu.cpsr.irq_disable = true;
+	
+	cpu.write_reg(14, cpu.raw_pc); // TODO make sure this is indeed the address of inst after the SWI inst
+	cpu.raw_pc = 0x0000_0008;
+	
+	cpu.last_inst_s_cycles = 2;
+	cpu.last_inst_n_cycles = 1;
+	cpu.last_inst_i_cycles = 0;
 }
 
 fn void breakpoint(Cpu* cpu) @private {
-	cpu.r14_abt = cpu.read_reg(REG_PC); // TODO make sure this is indeed the address of inst after the BKPT inst
-	cpu.write_reg(REG_PC, 0x0000_000C);
-	
 	cpu.spsr_abt = cpu.cpsr;
 	cpu.cpsr.mode = CPSR_MODE_ABORT;
 	cpu.cpsr.thumb = false;
 	cpu.cpsr.irq_disable = true;
+	
+	cpu.write_reg(14, cpu.raw_pc); // TODO make sure this is indeed the address of inst after the BKPT inst
+	cpu.raw_pc = 0x0000_000C;
+	
+	cpu.last_inst_s_cycles = 2;
+	cpu.last_inst_n_cycles = 1;
+	cpu.last_inst_i_cycles = 0;
 }
 
 fn void branch_and_exchange(Cpu* cpu, uint rn) @private {
 	uint rn_val = cpu.read_reg(rn);
 	uint dst_addr = rn_val & ~1u;
 	cpu.cpsr.thumb = (rn_val & 1u) == 1;
-	cpu.write_reg(REG_PC, dst_addr);
+	cpu.raw_pc = dst_addr;
 	
 	cpu.last_inst_s_cycles = 2;
 	cpu.last_inst_n_cycles = 1;
@@ -188,6 +229,6 @@ fn void branch_with_maybe_link(Cpu* cpu, bool link, uint inst_offset) @private {
 	abort("not implemented yet");
 }
 
-fn void unknown_inst(ArmInst inst) {
+fn void unknown_inst(ArmInst inst) @private {
 	abort("unknown inst: 0x%x", inst.raw);
 }
