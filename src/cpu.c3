@@ -104,8 +104,7 @@ fn void fetch_decode_execute(Cpu* cpu, Mmu* mmu) {
 fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 	ArmInst inst;
 	inst.raw = mmu.read32(cpu.raw_pc);
-	
-	// TODO increment PC, be mindfull of pipeline!
+	cpu.raw_pc += cpu.instruction_size();
 	
 	if (!check_cond(inst.cond, cpu.cpsr)) {
 		cpu.cycles += mmu.waitstates_s;
