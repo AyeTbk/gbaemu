@@ -30,6 +30,21 @@ fn void Mmu.write32(Mmu* mmu, uint addr, uint value) {
 	mmu.update_waitstates(addr);
 }
 
+fn char Mmu.read8(Mmu* mmu, uint addr) {
+	// limit to address space
+	addr = addr & MMU_ADDR_MASK;
+	char value = mmu.mem[addr];
+	mmu.update_waitstates(addr);
+	return value;
+}
+
+fn void Mmu.write8(Mmu* mmu, uint addr, char value) {
+	// limit to address space
+	addr = addr & MMU_ADDR_MASK;
+	mmu.mem[addr] = value;
+	mmu.update_waitstates(addr);
+}
+
 fn void Mmu.update_waitstates(Mmu* mmu, uint addr) {
 	mmu.waitstates_s = 1;
 	mmu.waitstates_n = 1;

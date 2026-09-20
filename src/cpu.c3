@@ -117,9 +117,9 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 		case inst.raw & 0xFF0_00F0 == 0x120_0070: // Breakpoint (Abort)
 			breakpoint(cpu);
 		case inst.raw & 0xE00_0010 == 0xE00_0010: // Undefined (Single Data Transfer with invalid (register) shift)
-			unknown_inst(inst);
+			undefined_inst(inst);
 		case inst.raw & 0xC00_0000 == 0x400_0000: // TODO Single Data Transfer
-			unknown_inst(inst);
+			single_data_transfer(cpu, mmu, inst);
 		case inst.raw & 0xE00_0000 == 0x800_0000: // TODO Block Data Transfer
 			unknown_inst(inst);
 		case inst.raw & 0xE00_0000 == 0xA00_0000: // TODO Branch
@@ -183,6 +183,54 @@ union ArmInst @private {
 		uint rd: 12..15;
 		uint op2: 0..11;
 	}
+	bitstruct s_dat_transfer : uint @overlap {
+		bool offset_is_immediate: 25; // Immediate offset (0=immediate, 1=shifted reg)
+		bool pre_indexing: 24; // Pre(1)/Post(0) indexing bit
+		bool add_offset: 23;  // Up(1)/Down(0) bit
+		bool transfer_byte: 22; // Byte(1)/Word(0) bit
+		bool write_back: 21; // Write-back bit (0=no, 1=write address into base)
+		bool is_load: 20; // Load(1)/Store(0) bit
+		uint rn: 16..19;
+		uint rd: 12..15;
+		uint offset: 0..11;
+		uint shift_amount: 7..11;
+		uint shift_type: 5..6;
+		uint rm: 0..3;
+	}
+}
+
+struct ShiftResult @private {
+	bool carry;
+	uint value;
+}
+
+fn ShiftResult shift(uint base_offset, uint shift_amount, uint shift_type) @private {
+	ShiftResult res;
+	if (shift_amount == 0) {
+		res.value = base_offset;
+	} else {
+		switch (shift_type) {
+			case 0b00: // logical left
+				res.value = base_offset << shift_amount;
+				res.carry = (base_offset & 1 << (32 - shift_amount)) == 1;
+			case 0b01: // logical right
+				res.value = base_offset >> shift_amount;
+				res.carry = (base_offset & 1 << (shift_amount - 1)) == 1;
+			case 0b10: // arithmetic right
+				res.value = (uint)((int)base_offset >> shift_amount);
+				res.carry = (base_offset & 1 << (shift_amount - 1)) == 1;
+			case 0b11: // rotate right
+				res.value = base_offset << (32 - shift_amount) | base_offset >> shift_amount;
+				res.carry = (base_offset & 1u << 31u) == 1;
+			default:
+				unreachable();
+		}
+	}
+	return res;
+}
+
+fn uint rotate_left(uint value, uint rot_amount) @private {
+	return value >> (32 - rot_amount) | value << rot_amount;
 }
 
 fn void software_interrupt(Cpu* cpu) @private {
@@ -211,6 +259,67 @@ fn void breakpoint(Cpu* cpu) @private {
 	cpu.last_inst_s_cycles = 2;
 	cpu.last_inst_n_cycles = 1;
 	cpu.last_inst_i_cycles = 0;
+}
+
+fn void undefined_inst(ArmInst inst) @private {
+	abort("undefined inst: 0x%x", inst.raw);
+}
+
+fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
+	// Get offset
+	long offset;
+	if (inst.s_dat_transfer.offset_is_immediate) {
+		offset = inst.s_dat_transfer.offset;
+	} else {
+		uint base_offset = cpu.read_reg(inst.s_dat_transfer.rm);
+		uint shift_amount = inst.s_dat_transfer.shift_amount;
+		uint shift_type = inst.s_dat_transfer.shift_type;
+		ShiftResult res = shift(base_offset, shift_amount, shift_type);
+		offset = (long)res.value;
+	}
+	
+	// Compute address
+	uint addr = cpu.read_reg(inst.s_dat_transfer.rn);
+	if (!inst.s_dat_transfer.add_offset) {
+		offset = -offset;
+	}
+	
+	// Pre-indexing
+	if (inst.s_dat_transfer.pre_indexing) {
+		addr = (uint)((long)addr + offset);
+	}
+	
+	// Transfer
+	if (inst.s_dat_transfer.is_load) {
+		// Load
+		uint value;
+		if (inst.s_dat_transfer.transfer_byte) {
+			value = (uint)mmu.read8(addr);
+		} else {
+			uint raw_value = mmu.read32(addr);
+			uint rot_amount = (addr % 4) * 8;
+			value = rotate_left(raw_value, rot_amount);
+		}
+		cpu.write_reg(inst.s_dat_transfer.rd, value);
+	} else {
+		// Store
+		uint value = cpu.read_reg(inst.s_dat_transfer.rd);
+		if (inst.s_dat_transfer.transfer_byte) {
+			mmu.write8(addr, (char)(value & 0xFF));
+		} else {
+			mmu.write32(addr, value);
+		}
+	}
+	
+	// Post-indexing
+	if (!inst.s_dat_transfer.pre_indexing) {
+		addr = (uint)((long)addr + offset);
+	}
+	
+	// Write-back address (note: write-back bit doesn't matter for post-indexing, it always writes-back)
+	if (!inst.s_dat_transfer.pre_indexing || inst.s_dat_transfer.write_back) {
+		cpu.write_reg(inst.s_dat_transfer.rn, addr);
+	}
 }
 
 fn void branch_and_exchange(Cpu* cpu, uint rn) @private {
