@@ -1,8 +1,6 @@
 module gbaemu;
 import std::io;
 
-// comment
-
 fn int main(String[] args)
 {
 	Mmu* mmu = mem::new(Mmu);

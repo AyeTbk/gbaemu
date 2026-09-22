@@ -184,7 +184,7 @@ union ArmInst @private {
 		uint op2: 0..11;
 	}
 	bitstruct s_dat_transfer : uint @overlap {
-		bool offset_is_immediate: 25; // Immediate offset (0=immediate, 1=shifted reg)
+		bool offset_is_reg: 25; // Immediate offset (0=immediate, 1=shifted reg)
 		bool pre_indexing: 24; // Pre(1)/Post(0) indexing bit
 		bool add_offset: 23;  // Up(1)/Down(0) bit
 		bool transfer_byte: 22; // Byte(1)/Word(0) bit
@@ -230,6 +230,7 @@ fn ShiftResult shift(uint base_offset, uint shift_amount, uint shift_type) @priv
 }
 
 fn uint rotate_left(uint value, uint rot_amount) @private {
+	if (rot_amount == 0) return value;
 	return value >> (32 - rot_amount) | value << rot_amount;
 }
 
@@ -268,14 +269,14 @@ fn void undefined_inst(ArmInst inst) @private {
 fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
 	// Get offset
 	long offset;
-	if (inst.s_dat_transfer.offset_is_immediate) {
-		offset = inst.s_dat_transfer.offset;
-	} else {
+	if (inst.s_dat_transfer.offset_is_reg) {
 		uint base_offset = cpu.read_reg(inst.s_dat_transfer.rm);
 		uint shift_amount = inst.s_dat_transfer.shift_amount;
 		uint shift_type = inst.s_dat_transfer.shift_type;
 		ShiftResult res = shift(base_offset, shift_amount, shift_type);
 		offset = (long)res.value;
+	} else {
+		offset = inst.s_dat_transfer.offset;
 	}
 	
 	// Compute address
@@ -319,6 +320,23 @@ fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
 	// Write-back address (note: write-back bit doesn't matter for post-indexing, it always writes-back)
 	if (!inst.s_dat_transfer.pre_indexing || inst.s_dat_transfer.write_back) {
 		cpu.write_reg(inst.s_dat_transfer.rn, addr);
+	}
+	
+	// Set cycles
+	if (inst.s_dat_transfer.is_load) {
+		if (inst.s_dat_transfer.rd == REG_PC) {
+			cpu.last_inst_s_cycles = 2;
+			cpu.last_inst_n_cycles = 2;
+			cpu.last_inst_i_cycles = 1;
+		} else {
+			cpu.last_inst_s_cycles = 1;
+			cpu.last_inst_n_cycles = 1;
+			cpu.last_inst_i_cycles = 1;
+		}
+	} else {
+		cpu.last_inst_s_cycles = 0;
+		cpu.last_inst_n_cycles = 2;
+		cpu.last_inst_i_cycles = 0;
 	}
 }
 

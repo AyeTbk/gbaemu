@@ -9,6 +9,10 @@ struct Mmu {
 	uint waitstates_n;
 }
 
+fn void Mmu.init(Mmu* mmu) {
+	// Nothing for now
+}
+
 fn uint Mmu.read32(Mmu* mmu, uint addr) {
 	// limit to address space and forcibly align
 	addr = addr & MMU_ADDR_MASK & (~0b11u);
