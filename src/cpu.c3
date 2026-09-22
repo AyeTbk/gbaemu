@@ -184,7 +184,7 @@ union ArmInst @private {
 		uint op2: 0..11;
 	}
 	bitstruct s_dat_transfer : uint @overlap {
-		bool offset_is_immediate: 25; // Immediate offset (0=immediate, 1=shifted reg)
+		bool offset_is_reg: 25; // Immediate offset (0=immediate, 1=shifted reg)
 		bool pre_indexing: 24; // Pre(1)/Post(0) indexing bit
 		bool add_offset: 23;  // Up(1)/Down(0) bit
 		bool transfer_byte: 22; // Byte(1)/Word(0) bit
@@ -204,33 +204,81 @@ struct ShiftResult @private {
 	uint value;
 }
 
-fn ShiftResult shift(uint base_offset, uint shift_amount, uint shift_type) @private {
+fn ShiftResult shift(uint base_value, uint shift_amount, uint shift_type, Cpsr cpsr, bool is_register_shift) @private {
 	ShiftResult res;
-	if (shift_amount == 0) {
-		res.value = base_offset;
-	} else {
-		switch (shift_type) {
-			case 0b00: // logical left
-				res.value = base_offset << shift_amount;
-				res.carry = (base_offset & 1 << (32 - shift_amount)) == 1;
-			case 0b01: // logical right
-				res.value = base_offset >> shift_amount;
-				res.carry = (base_offset & 1 << (shift_amount - 1)) == 1;
-			case 0b10: // arithmetic right
-				res.value = (uint)((int)base_offset >> shift_amount);
-				res.carry = (base_offset & 1 << (shift_amount - 1)) == 1;
-			case 0b11: // rotate right
-				res.value = base_offset << (32 - shift_amount) | base_offset >> shift_amount;
-				res.carry = (base_offset & 1u << 31u) == 1;
-			default:
-				unreachable();
-		}
+	shift_amount &= 0xFF;
+	
+	if (shift_amount == 0 && is_register_shift) {
+		res.value = base_value;
+		res.carry = cpsr.c;
+		return res;
+	}
+	
+	switch (shift_type) {
+		case 0b00: // logical left
+			if (shift_amount == 0) {
+				res.value = base_value;
+				res.carry = cpsr.c;
+			} else if (shift_amount == 32) {
+				res.value = base_value;
+				res.carry = base_value & 1 == 1;
+			} else if (shift_amount > 32) {
+				res.value = 0;
+				res.carry = false;
+			} else {
+				res.value = base_value << shift_amount;
+				res.carry = (base_value & 1 << (32 - shift_amount)) != 0;
+			}
+		case 0b01: // logical right
+			if (shift_amount == 0) shift_amount = 32;
+			if (shift_amount == 32) {
+				res.value = 0;
+				res.carry = base_value >> 31 == 1;
+			} else if (shift_amount > 32) {
+				res.value = 0;
+				res.carry = false;
+			} else {
+				res.value = base_value >> shift_amount;
+				res.carry = (base_value >> (shift_amount - 1)) & 1 == 1;
+			}
+		case 0b10: // arithmetic right
+			if (shift_amount == 0) shift_amount = 32;
+			if (shift_amount >= 32) {
+				res.carry = base_value >> 31 == 1;
+				if (res.carry) {
+					res.value = 0xFFFF_FFFF;
+				} else {
+					res.value = 0;
+				}
+			} else {
+				res.value = (uint)((int)base_value >> shift_amount);
+				res.carry = (base_value >> (shift_amount - 1)) & 1 == 1;
+			}
+		case 0b11: // rotate right
+			if (shift_amount == 0) {
+				// rotate right extended
+				uint c_in = (uint)cpsr.c << 31;
+				res.value = base_value >> 1;
+				res.carry = base_value & 1 == 1;
+			} else if (shift_amount == 32) {
+				res.value = base_value;
+				res.carry = base_value >> 31 == 1;
+			} else {
+				while (shift_amount > 32) {
+					shift_amount -= 32;
+				}
+				res.value = base_value << (32 - shift_amount) | base_value >> shift_amount;
+				res.carry = (base_value >> (shift_amount - 1)) & 1 == 1;
+			}
+		default:
+			unreachable();
 	}
 	return res;
 }
 
-fn uint rotate_left(uint value, uint rot_amount) @private {
-	return value >> (32 - rot_amount) | value << rot_amount;
+fn uint rotate_right(uint value, uint rot_amount) @private {
+	if (rot_amount == 0) return value;
+	return value << (32 - rot_amount) | value >> rot_amount;
 }
 
 fn void software_interrupt(Cpu* cpu) @private {
@@ -268,14 +316,14 @@ fn void undefined_inst(ArmInst inst) @private {
 fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
 	// Get offset
 	long offset;
-	if (inst.s_dat_transfer.offset_is_immediate) {
-		offset = inst.s_dat_transfer.offset;
-	} else {
+	if (inst.s_dat_transfer.offset_is_reg) {
 		uint base_offset = cpu.read_reg(inst.s_dat_transfer.rm);
 		uint shift_amount = inst.s_dat_transfer.shift_amount;
 		uint shift_type = inst.s_dat_transfer.shift_type;
-		ShiftResult res = shift(base_offset, shift_amount, shift_type);
+		ShiftResult res = shift(base_offset, shift_amount, shift_type, cpu.cpsr, true);
 		offset = (long)res.value;
+	} else {
+		offset = inst.s_dat_transfer.offset;
 	}
 	
 	// Compute address
@@ -298,7 +346,7 @@ fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
 		} else {
 			uint raw_value = mmu.read32(addr);
 			uint rot_amount = (addr % 4) * 8;
-			value = rotate_left(raw_value, rot_amount);
+			value = rotate_right(raw_value, rot_amount);
 		}
 		cpu.write_reg(inst.s_dat_transfer.rd, value);
 	} else {
@@ -319,6 +367,23 @@ fn void single_data_transfer(Cpu* cpu, Mmu* mmu, ArmInst inst) @private {
 	// Write-back address (note: write-back bit doesn't matter for post-indexing, it always writes-back)
 	if (!inst.s_dat_transfer.pre_indexing || inst.s_dat_transfer.write_back) {
 		cpu.write_reg(inst.s_dat_transfer.rn, addr);
+	}
+	
+	// Set cycles
+	if (inst.s_dat_transfer.is_load) {
+		if (inst.s_dat_transfer.rd == REG_PC) {
+			cpu.last_inst_s_cycles = 2;
+			cpu.last_inst_n_cycles = 2;
+			cpu.last_inst_i_cycles = 1;
+		} else {
+			cpu.last_inst_s_cycles = 1;
+			cpu.last_inst_n_cycles = 1;
+			cpu.last_inst_i_cycles = 1;
+		}
+	} else {
+		cpu.last_inst_s_cycles = 0;
+		cpu.last_inst_n_cycles = 2;
+		cpu.last_inst_i_cycles = 0;
 	}
 }
 
