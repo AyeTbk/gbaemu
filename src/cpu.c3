@@ -118,7 +118,7 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 			breakpoint(cpu);
 		case inst.raw & 0xE00_0010 == 0xE00_0010: // Undefined (Single Data Transfer with invalid (register) shift)
 			undefined_inst(inst);
-		case inst.raw & 0xC00_0000 == 0x400_0000: // TODO Single Data Transfer
+		case inst.raw & 0xC00_0000 == 0x400_0000: // Single Data Transfer
 			single_data_transfer(cpu, mmu, inst);
 		case inst.raw & 0xE00_0000 == 0x800_0000: // TODO Block Data Transfer
 			unknown_inst(inst);
@@ -136,6 +136,8 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 			unknown_inst(inst);
 		case inst.raw & 0xE40_0090 == 0x040_0090: // TODO Halfword Data Transfer: immediate offset
 			unknown_inst(inst);
+		case inst.raw & 0xC00_0000 == 0x000_0000: // TODO Data processing / PSR transfer
+			data_processing(cpu, inst);
 		default: unknown_inst(inst);
 	}
 	
@@ -177,6 +179,7 @@ union ArmInst @private {
 		uint rn : 0..3;
 	}
 	bitstruct dataproc : uint {
+		bool i: 25;
 		uint opcode: 21..24;
 		bool s: 20;
 		uint rn: 16..19;
@@ -399,6 +402,10 @@ fn void branch_and_exchange(Cpu* cpu, uint rn) @private {
 }
 
 fn void branch_with_maybe_link(Cpu* cpu, bool link, uint inst_offset) @private {
+	abort("not implemented yet");
+}
+
+fn void data_processing(Cpu* cpu, ArmInst inst) @private {
 	abort("not implemented yet");
 }
 
