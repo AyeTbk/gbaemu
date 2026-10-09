@@ -170,7 +170,7 @@ fn void fetch_decode_execute_arm(Cpu* cpu, Mmu* mmu) @private {
 			unknown_inst(inst);
 		case inst.raw & 0xD90_0000 == 0x100_0000: // TODO PSR transfer
 			unknown_inst(inst);
-		case inst.raw & 0xC00_0000 == 0x000_0000: // TODO Data processing 
+		case inst.raw & 0xC00_0000 == 0x000_0000: // Data processing 
 			data_processing(cpu, inst);
 		default: unknown_inst(inst);
 	}

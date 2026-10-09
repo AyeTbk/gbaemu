@@ -270,14 +270,100 @@ fn void single_data_transfer__store_word() @test => @pool() {
 	assert_eq(result, 0x89AB_CDEF);
 }
 
+/* Data processing test to write:
+a test for each of the 16 opcodes (or maybe one test with all 16 checks in one go).
+a test for each of the 4 shift types, for both register specified shift and not.
+a test for each shift #0 encoding space reuse. (see stubs below)
+a test for S=0 (flags unaffected)
+a test for flags, for both logical and arithmetic operations (multiple cases in each test plz)
+a test for Rd=15 S=0 (works normally), a test for Rd=15 S=1 (restores SPSR)
+*/
+
+fn void data_processing__and() @test => @pool() {
+	Fx fx = make_fixture();
+	
+	fx.mmu.write32(0, 0xE0113002); // ands r3, r1, r2
+	fx.cpu.write_reg(1, 0xF071_1248);
+	fx.cpu.write_reg(2, 0xFF33_3667);
+	
+	gbaemu::fetch_decode_execute(&fx.cpu, fx.mmu);
+	
+	uint result = fx.cpu.read_reg(3);
+	assert_eq(result, 0xF031_1240);
+	assert(!fx.cpu.cpsr.c);
+	assert(!fx.cpu.cpsr.z);
+	assert(fx.cpu.cpsr.n);
+}
+
+fn void data_processing__eor() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__sub() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__rsb() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__add() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__adc() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__sbc() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__rsc() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__tst() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__teq() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__cmp() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__cmn() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__orr() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__mov() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__bic() @test => @pool() {
+	//xyz
+}
+
+fn void data_processing__mvn() @test => @pool() {
+	//xyz
+}
+
+
 // NOTE: A bunch of shifts tests are done in the single_data_transfer tests
-fn void data_transfer__op2_reg_shift_by_32_or_more() @test => @pool() {
+fn void data_processing__op2_reg_shift_by_32_or_more() @test => @pool() {
 	// TODO
 	// see arm7tdmi data sheet, page 4-15
 	// there's like 7 test cases to impl
 }
 
-fn void data_transfer__op2_reg_shift_by_0_special_meaning() @test => @pool() {
+fn void data_processing__op2_reg_shift_by_0_special_meaning() @test => @pool() {
 	// TODO
 	// see arm7tdmi data sheet, pages 4-13, 4-14
 	// thats maybe 4 test cases to impl
