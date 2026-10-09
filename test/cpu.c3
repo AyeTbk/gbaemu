@@ -270,14 +270,23 @@ fn void single_data_transfer__store_word() @test => @pool() {
 	assert_eq(result, 0x89AB_CDEF);
 }
 
+/* Data processing test to write:
+a test for each of the 16 opcodes (or maybe one test with all 16 checks in one go).
+a test for each of the 4 shift types, for both register specified shift and not.
+a test for each shift #0 encoding space reuse. (see stubs below)
+a test for S=0 (flags unaffected)
+a test for flags, for both logical and arithmetic operations (multiple cases in each test plz)
+a test for Rd=15 S=0 (works normally), a test for Rd=15 S=1 (restores SPSR)
+*/
+
 // NOTE: A bunch of shifts tests are done in the single_data_transfer tests
-fn void data_transfer__op2_reg_shift_by_32_or_more() @test => @pool() {
+fn void data_processing__op2_reg_shift_by_32_or_more() @test => @pool() {
 	// TODO
 	// see arm7tdmi data sheet, page 4-15
 	// there's like 7 test cases to impl
 }
 
-fn void data_transfer__op2_reg_shift_by_0_special_meaning() @test => @pool() {
+fn void data_processing__op2_reg_shift_by_0_special_meaning() @test => @pool() {
 	// TODO
 	// see arm7tdmi data sheet, pages 4-13, 4-14
 	// thats maybe 4 test cases to impl
